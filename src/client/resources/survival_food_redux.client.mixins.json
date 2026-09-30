@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.primegm.survivalfoodredux.nutrition.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "ServerPlayerMixin",
+    "CakeBlockMixin",
+    "FoodDataMixin"
+  ],
+  "client": [
+    "SelectedItemNameMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

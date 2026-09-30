@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "survival_food_redux",
+  "version": "${version}",
+  "name": "Survival Food Redux",
+  "description": "Survival Food Redux is a Fabric mod that adds nutritional food mechanics and food-related buffs to Minecraft.",
+  "authors": ["primegm"],
+  "license": "GPL-3.0-only",
+  "icon": "assets/survival_food_redux/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-datagen": [
+      "com.primegm.survivalfoodredux.survival_food_redux.client.SFRDataGenerator"
+    ],
+    "client": [
+      "com.primegm.survivalfoodredux.survival_food_redux.client.SFRClient"
+    ],
+    "main": [
+      "com.primegm.survivalfoodredux.survival_food_redux.SFR"
+    ]
+  },
+  "mixins": [
+    "survival_food_redux.mixins.json",
+    {
+      "config": "survival_food_redux.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}

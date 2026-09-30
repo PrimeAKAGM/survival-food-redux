@@ -1,0 +1,29 @@
+# Gradle
+/.gradle/
+/build/
+
+# Minecraft development environment
+/run/
+
+# IntelliJ IDEA
+/.idea/
+*.iml
+
+# Eclipse
+/.classpath
+/.project
+/.settings/
+
+# VS Code
+/.vscode/
+
+# Logs and temporary files
+*.log
+build_output.txt
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
