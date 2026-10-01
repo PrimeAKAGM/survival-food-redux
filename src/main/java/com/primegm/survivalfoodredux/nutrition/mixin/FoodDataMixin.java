@@ -17,9 +17,6 @@ public class FoodDataMixin {
     @Unique
     private int sfr$foodLevelBeforeTick;
 
-    @Unique
-    private float sfr$saturationLevelBeforeTick;
-
     @Inject(
             method = "tick",
             at = @At("HEAD")
@@ -28,13 +25,11 @@ public class FoodDataMixin {
             ServerPlayer player,
             CallbackInfo ci
     ) {
-        FoodData foodData = (FoodData) (Object) this;
+        FoodData foodData =
+                (FoodData) (Object) this;
 
         sfr$foodLevelBeforeTick =
                 foodData.getFoodLevel();
-
-        sfr$saturationLevelBeforeTick =
-                foodData.getSaturationLevel();
     }
 
     @Inject(
@@ -45,7 +40,8 @@ public class FoodDataMixin {
             ServerPlayer player,
             CallbackInfo ci
     ) {
-        FoodData foodData = (FoodData) (Object) this;
+        FoodData foodData =
+                (FoodData) (Object) this;
 
         int foodLevelAfterTick =
                 foodData.getFoodLevel();
@@ -53,19 +49,32 @@ public class FoodDataMixin {
         float saturationLevelAfterTick =
                 foodData.getSaturationLevel();
 
+        /*
+         * Nutrition should not decay while the player
+         * still has saturation available.
+         *
+         * Saturation represents the energy reserves from
+         * recently consumed food. Nutrition only begins
+         * to decay once those reserves are exhausted.
+         */
+        if (saturationLevelAfterTick > 0.0F) {
+            return;
+        }
+
+        /*
+         * Only decay nutrition when the actual hunger
+         * level decreases.
+         */
         boolean foodChanged =
                 foodLevelAfterTick
                         < sfr$foodLevelBeforeTick;
 
-        boolean saturationChanged =
-                saturationLevelAfterTick
-                        < sfr$saturationLevelBeforeTick;
-
-        if (!foodChanged && !saturationChanged) {
+        if (!foodChanged) {
             return;
         }
 
-        if (player.isCreative() || player.isSpectator()) {
+        if (player.isCreative()
+                || player.isSpectator()) {
             return;
         }
 

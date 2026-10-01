@@ -6,6 +6,8 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 
 /**
  * Nutrition GUI Screen - Opens with "Z" key.
@@ -377,6 +379,33 @@ public class NutritionScreen extends Screen {
                         | (g << 8)
                         | b;
     }
+	
+	@Override
+	public boolean keyPressed(KeyEvent event) {
+
+		// Close the nutrition screen using the same
+		// configurable key that opens it.
+		if (KeyInputHandler.NUTRITION_KEY.matches(event)) {
+			this.onClose();
+			return true;
+		}
+
+		return super.keyPressed(event);
+	}
+	
+	@Override
+	public boolean mouseClicked(
+			MouseButtonEvent event,
+			boolean doubleClick
+	) {
+
+		if (KeyInputHandler.NUTRITION_KEY.matchesMouse(event)) {
+			this.onClose();
+			return true;
+		}
+
+		return super.mouseClicked(event, doubleClick);
+	}
 
     @Override
     public boolean isPauseScreen() {

@@ -65,23 +65,33 @@ public class KeyInputHandler {
         }
 
         // Listen for key press each tick
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+        // Listen for key press each tick
+		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 
-            if (NUTRITION_KEY.consumeClick()) {
-                openNutritionScreen(client);
-            }
-        });
+			if (NUTRITION_KEY.consumeClick()) {
+				toggleNutritionScreen(client);
+			}
+		});
     }
 
-    private static void openNutritionScreen(
-            Minecraft client
-    ) {
-        if (client.player != null
-                && client.gui.screen() == null) {
+    private static void toggleNutritionScreen(
+        Minecraft client
+	) {
+		if (client.player == null) {
+			return;
+		}
 
-            client.setScreenAndShow(
-                    new NutritionScreen()
-            );
-        }
-    }
+		// Close the nutrition screen if it is already open
+		if (client.gui.screen() instanceof NutritionScreen) {
+			client.setScreenAndShow(null);
+			return;
+		}
+
+		// Open the nutrition screen if no other screen is open
+		if (client.gui.screen() == null) {
+			client.setScreenAndShow(
+					new NutritionScreen()
+			);
+		}
+	}
 }
