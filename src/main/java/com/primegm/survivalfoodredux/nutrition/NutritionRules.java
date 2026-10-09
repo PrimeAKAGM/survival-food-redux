@@ -1,3 +1,4 @@
+
 package com.primegm.survivalfoodredux.nutrition;
 
 public final class NutritionRules {
@@ -24,6 +25,9 @@ public final class NutritionRules {
     public static final int DOMINANT_THRESHOLD = 45;
     public static final int BALANCED_MAIN_THRESHOLD = 35;
     public static final int BALANCED_SECONDARY_THRESHOLD = 25;
+
+    private NutritionRules() {
+    }
 
     public static int getGainForGroup(FoodGroup group) {
         return switch (group) {
@@ -91,12 +95,72 @@ public final class NutritionRules {
             int sugar,
             int fat
     ) {
-        return getDominantGroup(
+        return isDominant(
+                FoodGroup.PROTEIN,
+                protein, fiber, sugar, fat
+        ) || isDominant(
+                FoodGroup.FIBER,
+                protein, fiber, sugar, fat
+        ) || isDominant(
+                FoodGroup.SUGAR,
+                protein, fiber, sugar, fat
+        ) || isDominant(
+                FoodGroup.FAT,
+                protein, fiber, sugar, fat
+        );
+    }
+
+    public static boolean isDominant(
+            FoodGroup group,
+            int protein,
+            int fiber,
+            int sugar,
+            int fat
+    ) {
+        if (group == null || group == FoodGroup.UNKNOWN) {
+            return false;
+        }
+
+        int[] values = {
                 protein,
                 fiber,
                 sugar,
                 fat
-        ) != FoodGroup.UNKNOWN;
+        };
+
+        int groupIndex = switch (group) {
+            case PROTEIN -> 0;
+            case FIBER -> 1;
+            case SUGAR -> 2;
+            case FAT -> 3;
+            case UNKNOWN -> -1;
+        };
+
+        if (groupIndex < 0) {
+            return false;
+        }
+
+        // The nutrient must be strictly above 45%.
+        if (values[groupIndex] <= DOMINANT_THRESHOLD) {
+            return false;
+        }
+
+        // At least two of the other three nutrients
+        // must be strictly below 25%.
+        int othersBelow25 = 0;
+
+        for (int i = 0; i < values.length; i++) {
+
+            if (i == groupIndex) {
+                continue;
+            }
+
+            if (values[i] < BALANCED_SECONDARY_THRESHOLD) {
+                othersBelow25++;
+            }
+        }
+
+        return othersBelow25 >= 2;
     }
 
     public static FoodGroup getDominantGroup(
@@ -105,13 +169,6 @@ public final class NutritionRules {
             int sugar,
             int fat
     ) {
-        int[] values = {
-                protein,
-                fiber,
-                sugar,
-                fat
-        };
-
         FoodGroup[] groups = {
                 FoodGroup.PROTEIN,
                 FoodGroup.FIBER,
@@ -119,35 +176,16 @@ public final class NutritionRules {
                 FoodGroup.FAT
         };
 
-        for (int i = 0; i < values.length; i++) {
+        for (FoodGroup group : groups) {
 
-            /*
-             * The nutrient itself must be strictly above 45.
-             */
-            if (values[i] <= DOMINANT_THRESHOLD) {
-                continue;
-            }
-
-            /*
-             * A nutrient is dominant when at least two
-             * of the other three nutrients are strictly
-             * below 25.
-             */
-            int othersBelow25 = 0;
-
-            for (int j = 0; j < values.length; j++) {
-
-                if (i == j) {
-                    continue;
-                }
-
-                if (values[j] < BALANCED_SECONDARY_THRESHOLD) {
-                    othersBelow25++;
-                }
-            }
-
-            if (othersBelow25 >= 2) {
-                return groups[i];
+            if (isDominant(
+                    group,
+                    protein,
+                    fiber,
+                    sugar,
+                    fat
+            )) {
+                return group;
             }
         }
 

@@ -40,6 +40,127 @@ public final class SFREffects {
         removeFiberRegeneration(player);
     }
 
+    // External finite-duration effects are captured before vanilla merges them
+    // with SFR's infinite-duration effect. The mixin calls this method.
+    public static boolean handleIncomingExternalEffect(
+            ServerPlayer player, MobEffectInstance incoming
+    ) {
+        // SFR's own effects use infinite duration. Never intercept those.
+        if (incoming.getDuration() <= 0) return false;
+
+        SFREffectState state = SFREffectStorage.get(player);
+        int slot = effectSlot(incoming);
+        if (slot < 0 || !controls(state, slot)) return false;
+
+        MobEffectInstance saved = saved(state, slot).orElse(null);
+        // A new external application replaces the stored contribution if
+        // stronger, or if it renews an equal-strength effect.
+        if (saved == null || incoming.getAmplifier() > saved.getAmplifier()
+                || (incoming.getAmplifier() == saved.getAmplifier()
+                && incoming.getDuration() > saved.getDuration())) {
+            state = withSaved(state, slot, Optional.of(new MobEffectInstance(incoming)));
+            SFREffectStorage.set(player, state);
+        }
+        refreshCombinedEffect(player, slot, state);
+        return true; // Vanilla must not put a second, hidden effect in the stack.
+    }
+
+    private static int effectSlot(MobEffectInstance effect) {
+        if (effect.is(MobEffects.SPEED)) return 0;
+        if (effect.is(MobEffects.SLOWNESS)) return 1;
+        if (effect.is(MobEffects.WEAKNESS)) return 2;
+        if (effect.is(MobEffects.HUNGER)) return 3;
+        if (effect.is(MobEffects.STRENGTH)) return 4;
+        if (effect.is(MobEffects.RESISTANCE)) return 5;
+        if (effect.is(MobEffects.REGENERATION)) return 6;
+        return -1;
+    }
+
+    private static boolean controls(SFREffectState s, int i) {
+        return switch (i) {
+            case 0 -> s.controllingSpeed();
+            case 1 -> s.controllingSlowness();
+            case 2 -> s.controllingWeakness();
+            case 3 -> s.controllingHunger();
+            case 4 -> s.controllingStrength();
+            case 5 -> s.controllingResistance();
+            case 6 -> s.controllingRegeneration();
+            default -> false;
+        };
+    }
+
+    private static Optional<MobEffectInstance> saved(SFREffectState s, int i) {
+        return switch (i) {
+            case 0 -> s.savedSpeed();
+            case 1 -> s.savedSlowness();
+            case 2 -> s.savedWeakness();
+            case 3 -> s.savedHunger();
+            case 4 -> s.savedStrength();
+            case 5 -> s.savedResistance();
+            case 6 -> s.savedRegeneration();
+            default -> Optional.empty();
+        };
+    }
+
+    private static SFREffectState withSaved(SFREffectState s, int i,
+                                              Optional<MobEffectInstance> effect) {
+        return new SFREffectState(
+                s.controllingSpeed(), i == 0 ? effect : s.savedSpeed(),
+                s.controllingSlowness(), i == 1 ? effect : s.savedSlowness(),
+                s.controllingWeakness(), i == 2 ? effect : s.savedWeakness(),
+                s.controllingHunger(), i == 3 ? effect : s.savedHunger(),
+                s.controllingStrength(), i == 4 ? effect : s.savedStrength(),
+                s.controllingResistance(), i == 5 ? effect : s.savedResistance(),
+                s.controllingRegeneration(), i == 6 ? effect : s.savedRegeneration()
+        );
+    }
+
+    private static void refreshCombinedEffect(ServerPlayer player, int slot,
+                                               SFREffectState state) {
+        var type = switch (slot) {
+            case 0 -> MobEffects.SPEED;
+            case 1 -> MobEffects.SLOWNESS;
+            case 2 -> MobEffects.WEAKNESS;
+            case 3 -> MobEffects.HUNGER;
+            case 4 -> MobEffects.STRENGTH;
+            case 5 -> MobEffects.RESISTANCE;
+            case 6 -> MobEffects.REGENERATION;
+            default -> throw new IllegalArgumentException("Unknown effect slot");
+        };
+        int amplifier = 0;
+        Optional<MobEffectInstance> external = saved(state, slot);
+        if (external.isPresent()) {
+            int extAmp = external.get().getAmplifier();
+            amplifier = (slot == 0 || slot >= 4)
+                    ? Math.min(extAmp + 1, 1) : extAmp;
+        }
+        MobEffectInstance current = player.getEffect(type);
+        if (current != null && current.getDuration() == -1
+                && current.getAmplifier() == amplifier) return;
+        player.removeEffect(type);
+        player.addEffect(new MobEffectInstance(type, -1, amplifier, false, true, true));
+    }
+
+    private static void tickSavedExternalEffects(ServerPlayer player) {
+        SFREffectState state = SFREffectStorage.get(player);
+        for (int i = 0; i < 7; i++) {
+            if (!controls(state, i)) continue;
+            Optional<MobEffectInstance> stored = saved(state, i);
+            if (stored.isEmpty()) continue;
+            MobEffectInstance effect = stored.get();
+            if (effect.getDuration() < 0) continue;
+            int remaining = effect.getDuration() - 1;
+            Optional<MobEffectInstance> next = remaining <= 0
+                    ? Optional.empty()
+                    : Optional.of(new MobEffectInstance(effect.getEffect(), remaining,
+                            effect.getAmplifier(), effect.isAmbient(),
+                            effect.isVisible(), effect.showIcon()));
+            state = withSaved(state, i, next);
+            SFREffectStorage.set(player, state);
+            if (remaining <= 0) refreshCombinedEffect(player, i, state);
+        }
+    }
+
     // ============================================================
     // EXTERNAL EFFECT MONITORING
     // ============================================================
@@ -49,6 +170,54 @@ public final class SFREffects {
     ) {
         SFREffectState state =
                 SFREffectStorage.get(player);
+
+        // Milk and other effect-clearing actions can remove effects
+        // without changing our persisted ownership flags. If an effect
+        // disappears, discard its saved external effect as well: it must
+        // not be resurrected when the nutrition condition later ends.
+        boolean missingSpeed = state.controllingSpeed()
+                && player.getEffect(MobEffects.SPEED) == null;
+        boolean missingSlowness = state.controllingSlowness()
+                && player.getEffect(MobEffects.SLOWNESS) == null;
+        boolean missingWeakness = state.controllingWeakness()
+                && player.getEffect(MobEffects.WEAKNESS) == null;
+        boolean missingHunger = state.controllingHunger()
+                && player.getEffect(MobEffects.HUNGER) == null;
+        boolean missingStrength = state.controllingStrength()
+                && player.getEffect(MobEffects.STRENGTH) == null;
+        boolean missingResistance = state.controllingResistance()
+                && player.getEffect(MobEffects.RESISTANCE) == null;
+        boolean missingRegeneration = state.controllingRegeneration()
+                && player.getEffect(MobEffects.REGENERATION) == null;
+
+        if (missingSpeed || missingSlowness || missingWeakness
+                || missingHunger || missingStrength || missingResistance
+                || missingRegeneration) {
+
+            SFREffectState repaired = new SFREffectState(
+                    !missingSpeed && state.controllingSpeed(),
+                    missingSpeed ? Optional.empty() : state.savedSpeed(),
+                    !missingSlowness && state.controllingSlowness(),
+                    missingSlowness ? Optional.empty() : state.savedSlowness(),
+                    !missingWeakness && state.controllingWeakness(),
+                    missingWeakness ? Optional.empty() : state.savedWeakness(),
+                    !missingHunger && state.controllingHunger(),
+                    missingHunger ? Optional.empty() : state.savedHunger(),
+                    !missingStrength && state.controllingStrength(),
+                    missingStrength ? Optional.empty() : state.savedStrength(),
+                    !missingResistance && state.controllingResistance(),
+                    missingResistance ? Optional.empty() : state.savedResistance(),
+                    !missingRegeneration && state.controllingRegeneration(),
+                    missingRegeneration ? Optional.empty() : state.savedRegeneration()
+            );
+
+            SFREffectStorage.set(player, repaired);
+            update(player, NutritionStorage.get(player));
+            state = SFREffectStorage.get(player);
+        }
+
+        tickSavedExternalEffects(player);
+        state = SFREffectStorage.get(player);
 
         if (state.controllingSpeed()) {
             checkExternalSpeed(player, state);
@@ -695,13 +864,12 @@ public final class SFREffects {
         boolean shouldHaveDebuff =
                 NutritionRules.isDeficient(sugar)
                         || (
-                        sugar > NutritionRules.DOMINANT_THRESHOLD
-                                && NutritionRules.getDominantGroup(
-                                comp.get(FoodGroup.PROTEIN),
+                        NutritionRules.isDominant(
+                                FoodGroup.SUGAR,
+                        comp.get(FoodGroup.PROTEIN),
                                 comp.get(FoodGroup.FIBER),
                                 sugar,
-                                comp.get(FoodGroup.FAT)
-                        ) == FoodGroup.SUGAR
+                                comp.get(FoodGroup.FAT))
                 );
 
         SFREffectState state =
@@ -769,11 +937,7 @@ public final class SFREffects {
             return;
         }
 
-        player.removeEffect(MobEffects.SLOWNESS);
-
-        state.savedSlowness().ifPresent(effect ->
-                player.addEffect(new MobEffectInstance(effect))
-        );
+        Optional<MobEffectInstance> externalToRestore = state.savedSlowness();
 
         state = new SFREffectState(
                 state.controllingSpeed(),
@@ -799,6 +963,11 @@ public final class SFREffects {
         );
 
         SFREffectStorage.set(player, state);
+
+        player.removeEffect(MobEffects.SLOWNESS);
+        externalToRestore.ifPresent(effect ->
+                player.addEffect(new MobEffectInstance(effect))
+        );
     }
 
     // ============================================================
@@ -830,13 +999,12 @@ public final class SFREffects {
         }
 
         boolean sugarDominant =
-                sugar > NutritionRules.DOMINANT_THRESHOLD
-                        && NutritionRules.getDominantGroup(
+                NutritionRules.isDominant(
+                                FoodGroup.SUGAR,
                         protein,
                         fiber,
                         sugar,
-                        fat
-                ) == FoodGroup.SUGAR;
+                        fat);
 
         boolean sugarDeficient =
                 NutritionRules.isDeficient(sugar);
@@ -924,18 +1092,7 @@ public final class SFREffects {
             return;
         }
 
-        player.removeEffect(MobEffects.SPEED);
-
-        if (state.savedSpeed().isPresent()) {
-
-            MobEffectInstance saved =
-                    state.savedSpeed().get();
-
-            MobEffectInstance restored =
-                    new MobEffectInstance(saved);
-
-            player.addEffect(restored);
-        }
+        Optional<MobEffectInstance> externalToRestore = state.savedSpeed();
 
         SFREffectState updated =
                 new SFREffectState(
@@ -965,6 +1122,11 @@ public final class SFREffects {
                 player,
                 updated
         );
+
+        player.removeEffect(MobEffects.SPEED);
+        externalToRestore.ifPresent(effect ->
+                player.addEffect(new MobEffectInstance(effect))
+        );
     }
 
     // ============================================================
@@ -980,13 +1142,12 @@ public final class SFREffects {
         boolean shouldHaveDebuff =
                 NutritionRules.isDeficient(protein)
                         || (
-                        protein > NutritionRules.DOMINANT_THRESHOLD
-                                && NutritionRules.getDominantGroup(
-                                protein,
+                        NutritionRules.isDominant(
+                                FoodGroup.PROTEIN,
+                        protein,
                                 comp.get(FoodGroup.FIBER),
                                 comp.get(FoodGroup.SUGAR),
-                                comp.get(FoodGroup.FAT)
-                        ) == FoodGroup.PROTEIN
+                                comp.get(FoodGroup.FAT))
                 );
 
         SFREffectState state =
@@ -1054,11 +1215,7 @@ public final class SFREffects {
             return;
         }
 
-        player.removeEffect(MobEffects.WEAKNESS);
-
-        state.savedWeakness().ifPresent(effect ->
-                player.addEffect(new MobEffectInstance(effect))
-        );
+        Optional<MobEffectInstance> externalToRestore = state.savedWeakness();
 
         state = new SFREffectState(
                 state.controllingSpeed(),
@@ -1084,6 +1241,11 @@ public final class SFREffects {
         );
 
         SFREffectStorage.set(player, state);
+
+        player.removeEffect(MobEffects.WEAKNESS);
+        externalToRestore.ifPresent(effect ->
+                player.addEffect(new MobEffectInstance(effect))
+        );
     }
 
     // ============================================================
@@ -1099,13 +1261,12 @@ public final class SFREffects {
         boolean shouldHaveDebuff =
                 NutritionRules.isDeficient(fiber)
                         || (
-                        fiber > NutritionRules.DOMINANT_THRESHOLD
-                                && NutritionRules.getDominantGroup(
-                                comp.get(FoodGroup.PROTEIN),
+                        NutritionRules.isDominant(
+                                FoodGroup.FIBER,
+                        comp.get(FoodGroup.PROTEIN),
                                 fiber,
                                 comp.get(FoodGroup.SUGAR),
-                                comp.get(FoodGroup.FAT)
-                        ) == FoodGroup.FIBER
+                                comp.get(FoodGroup.FAT))
                 );
 
         SFREffectState state =
@@ -1173,11 +1334,7 @@ public final class SFREffects {
             return;
         }
 
-        player.removeEffect(MobEffects.HUNGER);
-
-        state.savedHunger().ifPresent(effect ->
-                player.addEffect(new MobEffectInstance(effect))
-        );
+        Optional<MobEffectInstance> externalToRestore = state.savedHunger();
 
         state = new SFREffectState(
                 state.controllingSpeed(),
@@ -1203,6 +1360,11 @@ public final class SFREffects {
         );
 
         SFREffectStorage.set(player, state);
+
+        player.removeEffect(MobEffects.HUNGER);
+        externalToRestore.ifPresent(effect ->
+                player.addEffect(new MobEffectInstance(effect))
+        );
     }
 
     // ============================================================
@@ -1298,18 +1460,7 @@ public final class SFREffects {
             return;
         }
 
-        player.removeEffect(MobEffects.STRENGTH);
-
-        if (state.savedStrength().isPresent()) {
-
-            MobEffectInstance saved =
-                    state.savedStrength().get();
-
-            MobEffectInstance restored =
-                    new MobEffectInstance(saved);
-
-            player.addEffect(restored);
-        }
+        Optional<MobEffectInstance> externalToRestore = state.savedStrength();
 
         SFREffectState updated =
                 new SFREffectState(
@@ -1339,6 +1490,11 @@ public final class SFREffects {
                 player,
                 updated
         );
+
+        player.removeEffect(MobEffects.STRENGTH);
+        externalToRestore.ifPresent(effect ->
+                player.addEffect(new MobEffectInstance(effect))
+        );
     }
 
     // ============================================================
@@ -1352,13 +1508,12 @@ public final class SFREffects {
         int protein = comp.get(FoodGroup.PROTEIN);
 
         boolean proteinDominant =
-                protein > NutritionRules.DOMINANT_THRESHOLD
-                        && NutritionRules.getDominantGroup(
+                NutritionRules.isDominant(
+                                FoodGroup.PROTEIN,
                         protein,
                         comp.get(FoodGroup.FIBER),
                         comp.get(FoodGroup.SUGAR),
-                        comp.get(FoodGroup.FAT)
-                ) == FoodGroup.PROTEIN;
+                        comp.get(FoodGroup.FAT));
 
         boolean shouldHaveBuff =
                 protein >= NutritionRules.PROTEIN_TANK_THRESHOLD
@@ -1442,18 +1597,7 @@ public final class SFREffects {
             return;
         }
 
-        player.removeEffect(MobEffects.RESISTANCE);
-
-        if (state.savedResistance().isPresent()) {
-
-            MobEffectInstance saved =
-                    state.savedResistance().get();
-
-            MobEffectInstance restored =
-                    new MobEffectInstance(saved);
-
-            player.addEffect(restored);
-        }
+        Optional<MobEffectInstance> externalToRestore = state.savedResistance();
 
         SFREffectState updated =
                 new SFREffectState(
@@ -1483,6 +1627,11 @@ public final class SFREffects {
                 player,
                 updated
         );
+
+        player.removeEffect(MobEffects.RESISTANCE);
+        externalToRestore.ifPresent(effect ->
+                player.addEffect(new MobEffectInstance(effect))
+        );
     }
 
     // ============================================================
@@ -1497,13 +1646,12 @@ public final class SFREffects {
                 comp.get(FoodGroup.FIBER);
 
         boolean fiberDominant =
-                fiber > NutritionRules.DOMINANT_THRESHOLD
-                        && NutritionRules.getDominantGroup(
+                NutritionRules.isDominant(
+                                FoodGroup.FIBER,
                         comp.get(FoodGroup.PROTEIN),
                         fiber,
                         comp.get(FoodGroup.SUGAR),
-                        comp.get(FoodGroup.FAT)
-                ) == FoodGroup.FIBER;
+                        comp.get(FoodGroup.FAT));
 
         boolean shouldHaveBuff =
                 fiber >= FIBER_REGENERATION_THRESHOLD
@@ -1590,20 +1738,7 @@ public final class SFREffects {
             return;
         }
 
-        player.removeEffect(
-                MobEffects.REGENERATION
-        );
-
-        if (state.savedRegeneration().isPresent()) {
-
-            MobEffectInstance saved =
-                    state.savedRegeneration().get();
-
-            MobEffectInstance restored =
-                    new MobEffectInstance(saved);
-
-            player.addEffect(restored);
-        }
+        Optional<MobEffectInstance> externalToRestore = state.savedRegeneration();
 
         SFREffectState updated =
                 new SFREffectState(
@@ -1632,6 +1767,11 @@ public final class SFREffects {
         SFREffectStorage.set(
                 player,
                 updated
+        );
+
+        player.removeEffect(MobEffects.REGENERATION);
+        externalToRestore.ifPresent(effect ->
+                player.addEffect(new MobEffectInstance(effect))
         );
     }
 }

@@ -6,7 +6,8 @@
   "mixins": [
     "ServerPlayerMixin",
     "CakeBlockMixin",
-    "FoodDataMixin"
+    "FoodDataMixin",
+    "LivingEntityEffectMixin"
   ],
   "injectors": {
     "defaultRequire": 1
