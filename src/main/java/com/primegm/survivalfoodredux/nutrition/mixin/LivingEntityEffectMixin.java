@@ -1,3 +1,4 @@
+
 package com.primegm.survivalfoodredux.nutrition.mixin;
 
 import com.primegm.survivalfoodredux.nutrition.SFREffects;
@@ -28,10 +29,20 @@ public abstract class LivingEntityEffectMixin {
             return;
         }
 
-        // Only intercept an external application when SFR already owns
-        // the same effect. The handler will ignore SFR's internal calls.
         if (SFREffects.handleIncomingExternalEffect(player, newEffect)) {
             cir.setReturnValue(true);
+        }
+    }
+
+    @Inject(
+            method = "removeAllEffects()Z",
+            at = @At("RETURN")
+    )
+    private void sfr$afterAllEffectsCleared(
+            CallbackInfoReturnable<Boolean> cir
+    ) {
+        if ((Object) this instanceof ServerPlayer player) {
+            SFREffects.onAllEffectsCleared(player);
         }
     }
 }
